@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CanSat Ground Control Station (GCS) - Trishul Architecture</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  
+  <!-- Local Offline CSS Dependencies -->
+  <link rel="stylesheet" href="libs/leaflet.css" />
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Local Offline JavaScript Dependencies -->
+  <script src="libs/leaflet.js"></script>
+  <script src="libs/chart.js"></script>
+  <script src="libs/three.js"></script>
+  <script src="libs/lucide.js"></script>
+</head>
+<body>
+
+  <!-- Top Control Bar -->
+  <header class="gcs-header">
+    <div class="header-logo-title">
+      <div class="space-badge">
+        <i data-lucide="orbit" class="pulse-icon icon-cyan"></i>
+      </div>
+      <div>
+        <h1>TRISHUL OPERATIONS DASHBOARD</h1>
+        <div class="subtitle">Ground Control Station | Node-WebSocket GCS</div>
+      </div>
+    </div>
+    
+    <!-- System Status & Connection Settings -->
+    <div class="header-controls">
+      <div class="control-group">
+        <label for="serial-port"><i data-lucide="cpu"></i> Telemetry Interface</label>
+        <div class="input-action-row">
+          <select id="serial-port">
+            <option value="SIM">SIMULATOR (Local Server Loop)</option>
+            <!-- Dynamically populated from Node.js -->
+          </select>
+          <button id="btn-connect" class="btn btn-primary">Connect</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label><i data-lucide="radio"></i> Stream Control</label>
+        <div class="btn-group">
+          <button id="btn-stream-start" class="btn btn-success" disabled><i data-lucide="play"></i> Start</button>
+          <button id="btn-stream-stop" class="btn btn-danger" disabled><i data-lucide="square"></i> Stop</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label><i data-lucide="database"></i> Data Logging</label>
+        <div class="btn-group">
+          <button id="btn-export-csv" class="btn btn-secondary" title="Export parsed telemetry data to CSV"><i data-lucide="download"></i> Export CSV</button>
+          <button id="btn-export-graph" class="btn btn-secondary" title="Export charts as PNG"><i data-lucide="image"></i> Export Charts</button>
+          <button id="btn-view-stats" class="btn btn-secondary" title="View mission statistics"><i data-lucide="bar-chart-3"></i> Stats</button>
+          <button id="btn-sync-time" class="btn btn-secondary" title="Synchronize RTC/Mission Time to PC clock"><i data-lucide="clock"></i> Sync Time</button>
+          <button id="btn-reset-packets" class="btn btn-danger-outline" title="Clear packet log and metrics"><i data-lucide="rotate-ccw"></i> Reset</button>
+          <button id="btn-clear-data" class="btn btn-danger-outline" title="Clear ALL database records (destructive)"><i data-lucide="trash-2"></i> Clear DB</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Status Cards -->
+    <div class="header-metrics">
+      <div class="metric-mini">
+        <div class="metric-label">MISSION TIME (UTC)</div>
+        <div class="metric-value font-digital" id="display-mission-time">00:00:00</div>
+      </div>
+      <div class="metric-mini">
+        <div class="metric-label">PACKET COUNT</div>
+        <div class="metric-value font-digital" id="display-packet-count">0000</div>
+      </div>
+      <div class="metric-mini">
+        <div class="metric-label">COMMS STATUS</div>
+        <div class="metric-value font-digital text-danger" id="display-comms-status">OFFLINE</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Simulator Control Widget -->
+  <section class="simulation-widget">
+    <div class="sim-header">
+      <h3><i data-lucide="sliders"></i> Telemetry Simulator & Fault Injector</h3>
+      <span class="sim-status-indicator" id="sim-indicator">STANDBY</span>
+    </div>
+    <div class="sim-body">
+      <div class="sim-controls-row">
+        <button id="btn-sim-reset" class="btn btn-sm btn-secondary"><i data-lucide="refresh-cw"></i> Reset Flight</button>
+        <div class="slider-container">
+          <label for="sim-speed">Speed: <span id="sim-speed-val">1x</span></label>
+          <input type="range" id="sim-speed" min="1" max="10" value="1">
+        </div>
+      </div>
+      <div class="fault-injector">
+        <span class="fault-title">Inject Anomaly:</span>
+        <button id="fault-descent" class="btn btn-sm btn-fault" title="Forces descent rate to rise dangerously"><i data-lucide="trending-up"></i> Descent Anomaly</button>
+        <button id="fault-gps" class="btn btn-sm btn-fault" title="Simulates losing GPS satellite visibility"><i data-lucide="map-pin-off"></i> Drop GPS</button>
+        <button id="fault-separation" class="btn btn-sm btn-fault" title="Forces payload deployment mechanism failure"><i data-lucide="split"></i> Separation Failure</button>
+        <button id="fault-parachute" class="btn btn-sm btn-fault" title="Triggers premature parachute blast"><i data-lucide="wind"></i> Deploy Parachute</button>
+        <button id="btn-clear-faults" class="btn btn-sm btn-success-outline"><i data-lucide="check-circle"></i> Clear Faults</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main GCS Dashboard Grid -->
+  <main class="gcs-dashboard-grid">
+
+    <!-- LEFT COLUMN: Telemetry Displays & Fault Codes -->
+    <section class="dashboard-col col-left">
+      
+      <!-- Telemetry Readings -->
+      <div class="panel telemetry-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="file-text"></i> Live Telemetry Packet</h2>
+        </div>
+        <div class="panel-body">
+          <!-- Container Telemetry -->
+          <div class="telemetry-section">
+            <h3 class="section-title"><i data-lucide="box"></i> Container Sensors</h3>
+            <div class="telemetry-grid">
+              <div class="telemetry-card">
+                <div class="card-label">ALTITUDE</div>
+                <div class="card-value font-digital"><span id="tele-c-alt">0.0</span> <span class="unit">m</span></div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">PRESSURE</div>
+                <div class="card-value font-digital"><span id="tele-c-press">101325</span> <span class="unit">Pa</span></div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">TEMPERATURE</div>
+                <div class="card-value font-digital"><span id="tele-c-temp">25.0</span> <span class="unit">°C</span></div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">VOLTAGE</div>
+                <div class="card-value font-digital"><span id="tele-c-volt">4.20</span> <span class="unit">V</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Payload Telemetry -->
+          <div class="telemetry-section">
+            <h3 class="section-title"><i data-lucide="satellite"></i> Payload Science Pack</h3>
+            <div class="telemetry-grid">
+              <div class="telemetry-card">
+                <div class="card-label">PAYLOAD ALTITUDE</div>
+                <div class="card-value font-digital"><span id="tele-p-alt">0.0</span> <span class="unit">m</span></div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">DESCENT RATE</div>
+                <div class="card-value font-digital"><span id="tele-p-descent">0.0</span> <span class="unit">m/s</span></div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">GPS LATITUDE</div>
+                <div class="card-value font-digital" id="tele-p-lat">0.000000</div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">GPS LONGITUDE</div>
+                <div class="card-value font-digital" id="tele-p-lon">0.000000</div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">GPS SATS</div>
+                <div class="card-value font-digital" id="tele-p-sats">0</div>
+              </div>
+              <div class="telemetry-card">
+                <div class="card-label">ORIENTATION (R, P, Y)</div>
+                <div class="card-value font-digital">
+                  <span id="tele-p-roll">0</span>°, <span id="tele-p-pitch">0</span>°, <span id="tele-p-yaw">0</span>°
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error Code Monitoring System -->
+      <div class="panel error-code-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="shield-alert"></i> Mission Fault Monitoring</h2>
+        </div>
+        <div class="panel-body">
+          <div class="error-code-container">
+            <div class="error-code-label">SYSTEM ERROR STATE</div>
+            <div class="error-code-digits font-digital" id="error-digits">0000</div>
+          </div>
+          
+          <div class="error-digits-breakdown">
+            <div class="digit-box" id="error-d1">
+              <div class="digit-num font-digital">0</div>
+              <div class="digit-name">DESCENT RATE</div>
+              <div class="digit-desc">Within 8–10 m/s</div>
+            </div>
+            <div class="digit-box" id="error-d2">
+              <div class="digit-num font-digital">0</div>
+              <div class="digit-name">GPS LOCK</div>
+              <div class="digit-desc">GPS available</div>
+            </div>
+            <div class="digit-box" id="error-d3">
+              <div class="digit-num font-digital">0</div>
+              <div class="digit-name">SEPARATION</div>
+              <div class="digit-desc">Separated OK</div>
+            </div>
+            <div class="digit-box" id="error-d4">
+              <div class="digit-num font-digital">0</div>
+              <div class="digit-name">E-PARACHUTE</div>
+              <div class="digit-desc">Parachute Safe</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MIDDLE COLUMN: 3D model, Camera view, & Commands -->
+    <section class="dashboard-col col-middle">
+      
+      <!-- 3D Model Visualization (Optimized with containment layout) -->
+      <div class="panel orientation-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="refresh-cw"></i> CanSat Orientation (3D Telemetry)</h2>
+          <div class="panel-actions font-digital">
+            R: <span id="text-roll">0</span>° | P: <span id="text-pitch">0</span>° | Y: <span id="text-yaw">0</span>°
+          </div>
+        </div>
+        <div class="panel-body canvas-container containment-optimized">
+          <div id="three-canvas-container"></div>
+          <div class="artificial-horizon">
+            <div class="horizon-reticle"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video Feed Panel (Optimized with containment layout) -->
+      <div class="panel video-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="video"></i> Live Camera Feed</h2>
+          <div class="video-selectors">
+            <select id="camera-select">
+              <option value="">Scanning Cameras...</option>
+            </select>
+            <button id="btn-camera-toggle" class="btn btn-sm btn-primary">Start Feed</button>
+          </div>
+        </div>
+        <div class="panel-body video-container containment-optimized">
+          <video id="webcam-video" autoplay playsinline muted></video>
+          <div class="video-overlay">
+            <div class="crosshair"></div>
+            <div class="overlay-data overlay-top-left">CAM STREAM: <span id="cam-status" class="text-danger">INACTIVE</span></div>
+            <div class="overlay-data overlay-top-right">ALT: <span id="overlay-alt">0.0</span> m</div>
+            <div class="overlay-data overlay-bottom-left" id="overlay-timestamp">UTC: --:--:--</div>
+            <div class="overlay-data overlay-bottom-right">REC <span class="rec-dot"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mission Control Command Panel -->
+      <div class="panel command-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="terminal"></i> Mission Control Console</h2>
+        </div>
+        <div class="panel-body">
+          <div class="command-grid">
+            
+            <div class="command-card">
+              <div class="cmd-info">
+                <h4>Manual Separation</h4>
+                <p>Deploy science payload from container</p>
+              </div>
+              <div class="cmd-actions">
+                <label class="switch-arm">
+                  <input type="checkbox" id="arm-separation">
+                  <span class="arm-slider"></span>
+                  ARMED
+                </label>
+                <button id="btn-trigger-separation" class="btn btn-danger font-digital" disabled>DEPLOY</button>
+              </div>
+            </div>
+
+            <div class="command-card">
+              <div class="cmd-info">
+                <h4>Emergency Parachute</h4>
+                <p>Deploy emergency reserve parachute</p>
+              </div>
+              <div class="cmd-actions">
+                <label class="switch-arm">
+                  <input type="checkbox" id="arm-parachute">
+                  <span class="arm-slider"></span>
+                  ARMED
+                </label>
+                <button id="btn-trigger-parachute" class="btn btn-danger font-digital" disabled>E-DEPLOY</button>
+              </div>
+            </div>
+
+            <div class="command-card">
+              <div class="cmd-info">
+                <h4>Redundant Activation</h4>
+                <p>Fire secondary reserve activation charges</p>
+              </div>
+              <div class="cmd-actions">
+                <label class="switch-arm">
+                  <input type="checkbox" id="arm-redundant">
+                  <span class="arm-slider"></span>
+                  ARMED
+                </label>
+                <button id="btn-trigger-redundant" class="btn btn-danger font-digital" disabled>FIRE</button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Command Execution Logging -->
+          <div class="console-log-container">
+            <div class="console-header">COMMAND EXECUTION LOG</div>
+            <div class="console-log" id="console-logs">
+              <div class="log-line text-muted">[00:00:00] Initializing GCS Subsystem...</div>
+              <div class="log-line text-success">[00:00:01] Awaiting telemetry server link.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: Map & Telemetry Graphs -->
+    <section class="dashboard-col col-right">
+      
+      <!-- Leaflet GPS Track Map (Optimized with containment layout) -->
+      <div class="panel map-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="map"></i> Real-Time GPS Tracking</h2>
+          <div class="panel-actions font-digital" id="map-coordinates">
+            LAT: 0.000000 | LON: 0.000000
+          </div>
+        </div>
+        <div class="panel-body map-container containment-optimized">
+          <div id="gps-map"></div>
+        </div>
+      </div>
+
+      <!-- Real-Time Graphs -->
+      <div class="panel graphs-panel">
+        <div class="panel-header">
+          <h2><i data-lucide="line-chart"></i> Real-Time Mission Charts</h2>
+          <div class="graph-tabs">
+            <button class="tab-btn active" id="btn-tab-altitude-rate" onclick="switchGraphTab('altitude-rate')">Altitude / Descent</button>
+            <button class="tab-btn" id="btn-tab-press-temp" onclick="switchGraphTab('press-temp')">Press / Temp</button>
+            <button class="tab-btn" id="btn-tab-batt-sats" onclick="switchGraphTab('batt-sats')">Voltage / Satellites</button>
+          </div>
+        </div>
+        <div class="panel-body graph-container">
+          <div class="graph-tab-content active" id="tab-altitude-rate">
+            <canvas id="chart-altitude-rate"></canvas>
+          </div>
+          <div class="graph-tab-content" id="tab-press-temp">
+            <canvas id="chart-press-temp"></canvas>
+          </div>
+          <div class="graph-tab-content" id="tab-batt-sats">
+            <canvas id="chart-batt-sats"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Setup Lucide Icons on document load -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+    });
+  </script>
+
+  <!-- Service Worker registration script -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .then(reg => console.log('[ServiceWorker] Registered successfully:', reg.scope))
+          .catch(err => console.error('[ServiceWorker] Registration failed:', err));
+      });
+    }
+  </script>
+
+  <!-- Local Client App Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

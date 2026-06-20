@@ -1,0 +1,23 @@
+{
+  "name": "cansat-gcs",
+  "version": "1.0.0",
+  "description": "CanSat and CubeSat Ground Control Station Dashboard - Python/Web Architecture",
+  "main": "server.py",
+  "scripts": {
+    "start": "python server.py"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "optionalDependencies": {
+    "serialport": "^12.0.0"
+  },
+  "author": "India Space Lab Team",
+  "license": "ISC",
+  "python": {
+    "dependencies": [
+      "pyserial>=3.5"
+    ],
+    "install_command": "pip install pyserial"
+  }
+}
